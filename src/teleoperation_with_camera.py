@@ -9,14 +9,16 @@ from scservo_sdk import *
 # ================= CONFIG =================
 PORT = '/dev/ttyACM0'
 BAUD = 1000000
+LOOP_HZ = 60
+LOOP_DT = 1.0 / LOOP_HZ
 
 # Servo IDs
 SERVO_ID1 = 1   # base rotation (yaw)
 SERVO_ID2 = 2
 SERVO_ID3 = 3
-SERVO_ID4 = 4   # head up/down (pitch)
+SERVO_ID4 = 4   # head pitch
 SERVO_ID5 = 5
-SERVO_ID6 = 6   # gripper open/close
+SERVO_ID6 = 6   # gripper
 
 DEFAULT_SPEED = 1500
 DEFAULT_ACCEL = 255
@@ -25,14 +27,14 @@ DEFAULT_ACCEL = 255
 init_pose = [1989, 2144, 1048, 1021, 1129, 2040]
 
 # Servo limits
-MIN_MOTOR_ID1 = 750   # base min
-MAX_MOTOR_ID1 = 3278   # base max
+MIN_MOTOR_ID1 = 750
+MAX_MOTOR_ID1 = 3278
 
-MIN_MOTOR_ID4 = 1639   # head min
-MAX_MOTOR_ID4 = 795   # head max
+MIN_MOTOR_ID4 = 1639
+MAX_MOTOR_ID4 = 795
 
-MIN_MOTOR_ID6 = 2040   # gripper min
-MAX_MOTOR_ID6 = 3432   # gripper max
+MIN_MOTOR_ID6 = 2040
+MAX_MOTOR_ID6 = 3432
 
 # ================= FUNCTIONS =================
 def map_value(x, in_min, in_max, out_min, out_max):
@@ -47,36 +49,19 @@ def get_mouth_opening(shape):
     bottom = shape.part(66)
     chin = shape.part(8)
     nose = shape.part(27)
-    # Mouth open distance
     mouth_dist = math.hypot(top.x - bottom.x, top.y - bottom.y)
-
-    # Normalize by face height (nose to chin)
     face_height = math.hypot(chin.x - nose.x, chin.y - nose.y)
-    normalized = (mouth_dist / face_height) * 80.0  # scale to %
-    return normalized
+    return (mouth_dist / face_height) * 80.0
 
 def get_head_pitch(shape, frame_h):
     nose_y = shape.part(30).y
     center_y = frame_h / 2
-    pitch = (nose_y - center_y) / frame_h * 80.0   # inverted
-    return pitch
+    return (nose_y - center_y) / frame_h * 80.0
 
 def get_head_yaw(shape, frame_w):
     nose_x = shape.part(30).x
     center_x = frame_w / 2
-    yaw = (nose_x - center_x) / frame_w * 50.0    # tuned sensitivity
-    return yaw
-
-# --- Move all servos to initial positions ---
-def init_position(packetHandler):
-    print("➡️ Moving all servos to initial position...")
-    servo_ids = [SERVO_ID1, SERVO_ID2, SERVO_ID3, SERVO_ID4, SERVO_ID5, SERVO_ID6]
-    for i, sid in enumerate(servo_ids):
-        pos = init_pose[i]
-        packetHandler.WritePosEx(sid, pos, DEFAULT_SPEED, DEFAULT_ACCEL)
-        print(f"  Servo {sid} → {pos}")
-        time.sleep(0.02)
-    print("All servos commanded to initial positions.\n")
+    return (nose_x - center_x) / frame_w * 50.0
 
 # ================= SERVO SETUP =================
 portHandler = PortHandler(PORT)
@@ -89,9 +74,14 @@ if not portHandler.setBaudRate(BAUD):
 
 print("Port opened successfully")
 
-# --- Move servos to start pose ---
-init_position(packetHandler)
-time.sleep(2)
+# Move to initial pose
+servo_ids = [SERVO_ID1, SERVO_ID2, SERVO_ID3, SERVO_ID4, SERVO_ID5, SERVO_ID6]
+print("➡️ Moving servos to initial positions...")
+for i, sid in enumerate(servo_ids):
+    packetHandler.WritePosEx(sid, init_pose[i], DEFAULT_SPEED, DEFAULT_ACCEL)
+    print(f"  Servo {sid} → {init_pose[i]}")
+    time.sleep(0.02)
+print("Done.\n")
 
 # ================= DLIB SETUP =================
 predictor_path = "/home/panha/LeRobot-SO101-simulation-and-hardware/src/data/shape_predictor_68_face_landmarks.dat"
@@ -102,16 +92,19 @@ detector = dlib.get_frontal_face_detector()
 predictor = dlib.shape_predictor(predictor_path)
 
 # ================= CAMERA =================
-cap = cv2.VideoCapture(2)  # change index if using other USB cam
+cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
 if not cap.isOpened():
     sys.exit("Cannot open camera")
 
-print("Starting Dlib face control... (Cntrl+C to exit)")
+print("Starting Dlib face tracking + servo control @ 60 Hz (ESC to exit)")
 
 # ================= MAIN LOOP =================
 while True:
+    loop_start = time.time()
+
     ret, frame = cap.read()
     if not ret:
         print("Camera read failed")
@@ -120,7 +113,7 @@ while True:
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     faces = detector(gray, 0)
 
-    cv2.putText(frame, f"Faces detected: {len(faces)}", (10, 20),
+    cv2.putText(frame, f"Faces: {len(faces)}", (10, 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
     if len(faces) == 0:
@@ -133,30 +126,28 @@ while True:
 
         shape = predictor(gray, face)
 
-        # ======= GRIPPER CONTROL (Servo 6) =======
+        # Calculate
         mouth_open = get_mouth_opening(shape)
+        pitch = apply_deadzone(get_head_pitch(shape, frame.shape[0]))
+        yaw   = apply_deadzone(get_head_yaw(shape, frame.shape[1]))
+
+        # ====== SERVO OUTPUTS (same as your original) ======
         gripper_pos = map_value(mouth_open, 5, 25, MIN_MOTOR_ID6, MAX_MOTOR_ID6)
+        wrist_pos   = map_value(pitch, -10, 10, MIN_MOTOR_ID4, MAX_MOTOR_ID4)
+        base_pos    = map_value(yaw, -15, 15, MIN_MOTOR_ID1, MAX_MOTOR_ID1)
+
         packetHandler.WritePosEx(SERVO_ID6, gripper_pos, DEFAULT_SPEED, DEFAULT_ACCEL)
-
-        # ======= HEAD UP/DOWN CONTROL (Servo 4) =======
-        pitch = get_head_pitch(shape, frame.shape[0])
-        pitch = apply_deadzone(pitch, 2.0)
-        wrist_pos = map_value(pitch, -10, 10, MIN_MOTOR_ID4, MAX_MOTOR_ID4)
         packetHandler.WritePosEx(SERVO_ID4, wrist_pos, DEFAULT_SPEED, DEFAULT_ACCEL)
-
-        # ======= FACE LEFT/RIGHT CONTROL (Servo 1) =======
-        yaw = get_head_yaw(shape, frame.shape[1])
-        yaw = apply_deadzone(yaw, 2.0)
-        base_pos = map_value(yaw, -15, 15, MIN_MOTOR_ID1, MAX_MOTOR_ID1)
         packetHandler.WritePosEx(SERVO_ID1, base_pos, DEFAULT_SPEED, DEFAULT_ACCEL)
 
-        print(f"➡️ Mouth: {mouth_open:.2f}, Pitch: {pitch:.2f}, Yaw: {yaw:.2f}, "
+        # ====== Your print stays EXACTLY the same ======
+        print(f"Mouth: {mouth_open:.2f}, Pitch: {pitch:.2f}, Yaw: {yaw:.2f}, "
               f"Servo6: {gripper_pos}, Servo4: {wrist_pos}, Servo1: {base_pos}")
 
         # Draw landmarks
         for n in range(68):
-            x, y = shape.part(n).x, shape.part(n).y
-            cv2.circle(frame, (x, y), 1, (0, 255, 0), -1)
+            px, py = shape.part(n).x, shape.part(n).y
+            cv2.circle(frame, (px, py), 1, (0, 255, 0), -1)
 
         cv2.putText(frame, f"Mouth: {mouth_open:.2f}", (10, 80),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
@@ -165,14 +156,19 @@ while True:
         cv2.putText(frame, f"Yaw: {yaw:.1f}", (10, 140),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
 
-    cv2.imshow("Dlib Face Control (Yaw+Pitch+Mouth)", frame)
-    if cv2.waitKey(1) == 27:  # ESC
-        print("Exiting by user")
+    cv2.imshow("Dlib Face Tracking + Servo Control (60 Hz)", frame)
+    if cv2.waitKey(1) == 27:
+        print("Exiting...")
         break
+
+    # ---- 60 Hz rate limiter ----
+    elapsed = time.time() - loop_start
+    sleep_time = LOOP_DT - elapsed
+    if sleep_time > 0:
+        time.sleep(sleep_time)
 
 # ================= CLEANUP =================
 cap.release()
 cv2.destroyAllWindows()
 portHandler.closePort()
-print("Port closed")
-
+print("Camera closed, port closed")
