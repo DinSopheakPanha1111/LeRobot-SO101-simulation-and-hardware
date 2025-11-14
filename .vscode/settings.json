@@ -1,0 +1,38 @@
+{
+    "python.autoComplete.extraPaths": [
+        "/home/panha/sporaX_ws/install/robot_interfaces/local/lib/python3.10/dist-packages",
+        "/home/panha/ros2_ws/install/actions_py/lib/python3.10/site-packages",
+        "/home/panha/ros2_ws/install/my_robot_interfaces/local/lib/python3.10/dist-packages",
+        "/home/panha/ros2_ws/install/executors_py/lib/python3.10/site-packages",
+        "/home/panha/WitImu_ws/build/wit_ros2_imu",
+        "/home/panha/WitImu_ws/install/wit_ros2_imu/lib/python3.10/site-packages",
+        "/home/panha/mushroom_ws_V2/build/py_mushroom_control",
+        "/home/panha/mushroom_ws_V2/install/py_mushroom_control/lib/python3.10/site-packages",
+        "/home/panha/mushroom_ws_V2/install/mushroom_msgs/local/lib/python3.10/dist-packages",
+        "/home/panha/ws_moveit/install/moveit_task_constructor_core/local/lib/python3.10/dist-packages",
+        "/home/panha/ws_moveit/install/moveit_configs_utils/lib/python3.10/site-packages",
+        "/home/panha/ws_moveit/install/srdfdom/local/lib/python3.10/dist-packages",
+        "/home/panha/ws_moveit/install/moveit_task_constructor_msgs/local/lib/python3.10/dist-packages",
+        "/home/panha/ws_moveit/install/launch_param_builder/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/panha/sporaX_ws/install/robot_interfaces/local/lib/python3.10/dist-packages",
+        "/home/panha/ros2_ws/install/actions_py/lib/python3.10/site-packages",
+        "/home/panha/ros2_ws/install/my_robot_interfaces/local/lib/python3.10/dist-packages",
+        "/home/panha/ros2_ws/install/executors_py/lib/python3.10/site-packages",
+        "/home/panha/WitImu_ws/build/wit_ros2_imu",
+        "/home/panha/WitImu_ws/install/wit_ros2_imu/lib/python3.10/site-packages",
+        "/home/panha/mushroom_ws_V2/build/py_mushroom_control",
+        "/home/panha/mushroom_ws_V2/install/py_mushroom_control/lib/python3.10/site-packages",
+        "/home/panha/mushroom_ws_V2/install/mushroom_msgs/local/lib/python3.10/dist-packages",
+        "/home/panha/ws_moveit/install/moveit_task_constructor_core/local/lib/python3.10/dist-packages",
+        "/home/panha/ws_moveit/install/moveit_configs_utils/lib/python3.10/site-packages",
+        "/home/panha/ws_moveit/install/srdfdom/local/lib/python3.10/dist-packages",
+        "/home/panha/ws_moveit/install/moveit_task_constructor_msgs/local/lib/python3.10/dist-packages",
+        "/home/panha/ws_moveit/install/launch_param_builder/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ]
+}

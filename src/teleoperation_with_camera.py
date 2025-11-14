@@ -22,20 +22,17 @@ DEFAULT_SPEED = 1500
 DEFAULT_ACCEL = 255
 
 # Initial positions
-init_pose = [2030, 3165, 0, 2300, 3590, 1940]
+init_pose = [1989, 2144, 1048, 1021, 1129, 2040]
 
 # Servo limits
-MIN_MOTOR_ID1 = 800
-MAX_MOTOR_ID1 = 2800
-MIN_MOTOR_ID4 = 2200
-MAX_MOTOR_ID4 = 3005
-MIN_MOTOR_ID6 = 1940
-MAX_MOTOR_ID6 = 3023
+MIN_MOTOR_ID1 = 750   # base min
+MAX_MOTOR_ID1 = 3278   # base max
 
-# Low-pass filter constants (0.0–1.0, lower = smoother)
-ALPHA_YAW   = 0.2
-ALPHA_PITCH = 0.2
-ALPHA_MOUTH = 0.3
+MIN_MOTOR_ID4 = 1639   # head min
+MAX_MOTOR_ID4 = 795   # head max
+
+MIN_MOTOR_ID6 = 2040   # gripper min
+MAX_MOTOR_ID6 = 3432   # gripper max
 
 # ================= FUNCTIONS =================
 def map_value(x, in_min, in_max, out_min, out_max):
@@ -45,31 +42,37 @@ def map_value(x, in_min, in_max, out_min, out_max):
 def apply_deadzone(value, threshold=2.0):
     return 0 if abs(value) < threshold else value
 
-def lowpass_filter(prev, new, alpha):
-    return alpha * new + (1 - alpha) * prev
-
 def get_mouth_opening(shape):
     top = shape.part(62)
     bottom = shape.part(66)
     chin = shape.part(8)
     nose = shape.part(27)
+    # Mouth open distance
     mouth_dist = math.hypot(top.x - bottom.x, top.y - bottom.y)
+
+    # Normalize by face height (nose to chin)
     face_height = math.hypot(chin.x - nose.x, chin.y - nose.y)
-    return (mouth_dist / face_height) * 155.0  # normalized %
+    normalized = (mouth_dist / face_height) * 80.0  # scale to %
+    return normalized
 
 def get_head_pitch(shape, frame_h):
     nose_y = shape.part(30).y
     center_y = frame_h / 2
-    return (center_y - nose_y) / frame_h * 150.0
+    pitch = (nose_y - center_y) / frame_h * 80.0   # inverted
+    return pitch
 
 def get_head_yaw(shape, frame_w):
     nose_x = shape.part(30).x
     center_x = frame_w / 2
-    return (nose_x - center_x) / frame_w * 100.0
+    yaw = (nose_x - center_x) / frame_w * 50.0    # tuned sensitivity
+    return yaw
 
+# --- Move all servos to initial positions ---
 def init_position(packetHandler):
-    print("Moving all servos to initial position...")
-    for sid, pos in zip(range(1, 7), init_pose):
+    print("➡️ Moving all servos to initial position...")
+    servo_ids = [SERVO_ID1, SERVO_ID2, SERVO_ID3, SERVO_ID4, SERVO_ID5, SERVO_ID6]
+    for i, sid in enumerate(servo_ids):
+        pos = init_pose[i]
         packetHandler.WritePosEx(sid, pos, DEFAULT_SPEED, DEFAULT_ACCEL)
         print(f"  Servo {sid} → {pos}")
         time.sleep(0.02)
@@ -85,27 +88,27 @@ if not portHandler.setBaudRate(BAUD):
     sys.exit("Failed to set baudrate")
 
 print("Port opened successfully")
+
+# --- Move servos to start pose ---
 init_position(packetHandler)
 time.sleep(2)
 
 # ================= DLIB SETUP =================
-predictor_path = "data/shape_predictor_68_face_landmarks.dat"
+predictor_path = "/home/panha/LeRobot-SO101-simulation-and-hardware/src/data/shape_predictor_68_face_landmarks.dat"
 if not os.path.exists(predictor_path):
     sys.exit(f"Missing predictor file: {predictor_path}")
+
 detector = dlib.get_frontal_face_detector()
 predictor = dlib.shape_predictor(predictor_path)
 
 # ================= CAMERA =================
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(2)  # change index if using other USB cam
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 if not cap.isOpened():
     sys.exit("Cannot open camera")
 
-print("🎥 Starting Dlib face control... (Press ESC to exit)")
-
-# Initialize filtered values
-filt_yaw = filt_pitch = filt_mouth = 0.0
+print("Starting Dlib face control... (Cntrl+C to exit)")
 
 # ================= MAIN LOOP =================
 while True:
@@ -116,6 +119,7 @@ while True:
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     faces = detector(gray, 0)
+
     cv2.putText(frame, f"Faces detected: {len(faces)}", (10, 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
@@ -124,48 +128,44 @@ while True:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
     for face in faces:
+        x, y, w, h = face.left(), face.top(), face.width(), face.height()
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+
         shape = predictor(gray, face)
 
-        # --- RAW VALUES ---
+        # ======= GRIPPER CONTROL (Servo 6) =======
         mouth_open = get_mouth_opening(shape)
-        pitch_raw  = get_head_pitch(shape, frame.shape[0])
-        yaw_raw    = get_head_yaw(shape, frame.shape[1])
-
-        # --- FILTERED VALUES ---
-        filt_mouth = lowpass_filter(filt_mouth, mouth_open, ALPHA_MOUTH)
-        filt_pitch = lowpass_filter(filt_pitch, pitch_raw,  ALPHA_PITCH)
-        filt_yaw   = lowpass_filter(filt_yaw,   yaw_raw,    ALPHA_YAW)
-
-        # ======= GRIPPER (Servo 6) =======
-        gripper_pos = map_value(filt_mouth, 5, 25, MIN_MOTOR_ID6, MAX_MOTOR_ID6)
+        gripper_pos = map_value(mouth_open, 5, 25, MIN_MOTOR_ID6, MAX_MOTOR_ID6)
         packetHandler.WritePosEx(SERVO_ID6, gripper_pos, DEFAULT_SPEED, DEFAULT_ACCEL)
 
-        # ======= HEAD UP/DOWN (Servo 4) =======
-        pitch = apply_deadzone(filt_pitch, 2.0)
+        # ======= HEAD UP/DOWN CONTROL (Servo 4) =======
+        pitch = get_head_pitch(shape, frame.shape[0])
+        pitch = apply_deadzone(pitch, 2.0)
         wrist_pos = map_value(pitch, -10, 10, MIN_MOTOR_ID4, MAX_MOTOR_ID4)
         packetHandler.WritePosEx(SERVO_ID4, wrist_pos, DEFAULT_SPEED, DEFAULT_ACCEL)
 
-        # ======= HEAD LEFT/RIGHT (Servo 1) =======
-        yaw = apply_deadzone(filt_yaw, 2.0)
+        # ======= FACE LEFT/RIGHT CONTROL (Servo 1) =======
+        yaw = get_head_yaw(shape, frame.shape[1])
+        yaw = apply_deadzone(yaw, 2.0)
         base_pos = map_value(yaw, -15, 15, MIN_MOTOR_ID1, MAX_MOTOR_ID1)
         packetHandler.WritePosEx(SERVO_ID1, base_pos, DEFAULT_SPEED, DEFAULT_ACCEL)
 
-        print(f"➡️ Mouth:{filt_mouth:.1f}  Pitch:{filt_pitch:.1f}  Yaw:{filt_yaw:.1f}  "
-              f"S6:{gripper_pos} S4:{wrist_pos} S1:{base_pos}")
+        print(f"➡️ Mouth: {mouth_open:.2f}, Pitch: {pitch:.2f}, Yaw: {yaw:.2f}, "
+              f"Servo6: {gripper_pos}, Servo4: {wrist_pos}, Servo1: {base_pos}")
 
         # Draw landmarks
         for n in range(68):
             x, y = shape.part(n).x, shape.part(n).y
             cv2.circle(frame, (x, y), 1, (0, 255, 0), -1)
 
-        cv2.putText(frame, f"Mouth: {filt_mouth:.1f}", (10, 80),
+        cv2.putText(frame, f"Mouth: {mouth_open:.2f}", (10, 80),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
-        cv2.putText(frame, f"Pitch: {filt_pitch:.1f}", (10, 110),
+        cv2.putText(frame, f"Pitch: {pitch:.1f}", (10, 110),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
-        cv2.putText(frame, f"Yaw: {filt_yaw:.1f}", (10, 140),
+        cv2.putText(frame, f"Yaw: {yaw:.1f}", (10, 140),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
 
-    cv2.imshow("Dlib Face Control (Yaw + Pitch + Mouth)", frame)
+    cv2.imshow("Dlib Face Control (Yaw+Pitch+Mouth)", frame)
     if cv2.waitKey(1) == 27:  # ESC
         print("Exiting by user")
         break
@@ -174,4 +174,5 @@ while True:
 cap.release()
 cv2.destroyAllWindows()
 portHandler.closePort()
-print("Port closed cleanly")
+print("Port closed")
+
