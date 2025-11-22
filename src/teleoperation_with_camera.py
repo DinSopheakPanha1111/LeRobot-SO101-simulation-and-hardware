@@ -76,7 +76,7 @@ print("Port opened successfully")
 
 # Move to initial pose
 servo_ids = [SERVO_ID1, SERVO_ID2, SERVO_ID3, SERVO_ID4, SERVO_ID5, SERVO_ID6]
-print("Moving servos to initial positions...")
+print("➡️ Moving servos to initial positions...")
 for i, sid in enumerate(servo_ids):
     packetHandler.WritePosEx(sid, init_pose[i], DEFAULT_SPEED, DEFAULT_ACCEL)
     print(f"  Servo {sid} → {init_pose[i]}")
